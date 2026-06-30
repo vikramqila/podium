@@ -3,22 +3,26 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"gatewaykit/internal/config"
+	"gatewaykit/internal/proxy"
 )
 
 type Handler struct {
 	startedAt time.Time
 	routes    []config.Route
+	proxy     *proxy.Forwarder
 }
 
 func NewHandler(cfg config.Gateway) *Handler {
 	return &Handler{
 		startedAt: time.Now(),
 		routes:    cfg.Routes,
+		proxy:     proxy.NewForwarder(nil),
 	}
 }
 
@@ -39,7 +43,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "proxy_not_implemented"})
+	if err := h.proxy.ServeHTTP(w, r, route); err != nil {
+		if errors.Is(err, proxy.ErrUnsupportedUpstream) {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "proxy_not_implemented"})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "bad_gateway"})
+		return
+	}
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter) {

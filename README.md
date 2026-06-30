@@ -29,7 +29,7 @@ go test ./...
 - [x] Load gateway configuration from YAML
 - [x] Expose `GET /health`
 - [x] Match routes and enforce allowed methods
-- [ ] Proxy requests to single upstream routes
+- [x] Proxy requests to single upstream routes
 - [ ] Support prefix stripping
 - [ ] Support global and route-level timeouts
 - [ ] Support API key authentication
@@ -43,7 +43,9 @@ Current CLI output after a successful startup:
 GatewayKit listening on :8080 with 5 routes
 ```
 
-Implemented route matches currently return `501 Not Implemented` until proxying is added.
+Single `upstream.url` routes now proxy to their upstream service. Routes using
+`upstream.targets` still return `501 Not Implemented` until load balancing is added. If a
+configured upstream service is not running, the gateway returns `502 Bad Gateway`.
 
 ## Project Layout
 

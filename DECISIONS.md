@@ -46,10 +46,11 @@ without rewriting the core proxy path.
 - Project scaffold created.
 - YAML configuration loading and validation implemented.
 - HTTP server startup, `GET /health`, route matching, `404`, and `405` behavior implemented.
-- Matched routes return `501 Not Implemented` until the proxy stage is built.
+- Single `upstream.url` routes proxy requests and return upstream responses.
+- Multi-target upstream routes return `501 Not Implemented` until load balancing is built.
 
 ## Next Steps
 
-1. Add single-upstream proxying.
-2. Forward request method, path, query string, headers, and body.
-3. Return upstream status, headers, and body to the client.
+1. Add prefix stripping.
+2. Add global and route-level timeout handling.
+3. Add manual mock upstream instructions or a small mock upstream binary.

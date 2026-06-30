@@ -2,8 +2,10 @@ package gateway
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"gatewaykit/internal/config"
@@ -68,6 +70,52 @@ func TestMatchedAllowedRouteReturnsProxyPlaceholder(t *testing.T) {
 
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestMatchedAllowedRouteProxiesSingleUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.RequestURI(); got != "/api/users/42?expand=true" {
+			t.Fatalf("request URI = %q, want /api/users/42?expand=true", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if got := string(body); got != `{"name":"Ada"}` {
+			t.Fatalf("body = %q, want JSON payload", got)
+		}
+
+		w.Header().Set("X-Upstream", "users")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"accepted":true}`))
+	}))
+	defer upstream.Close()
+
+	handler := NewHandler(config.Gateway{
+		Routes: []config.Route{
+			{
+				Path:    "/api/users",
+				Methods: []string{http.MethodPost},
+				Upstream: config.Upstream{
+					URL: upstream.URL,
+				},
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/users/42?expand=true", strings.NewReader(`{"name":"Ada"}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+	if got := rec.Header().Get("X-Upstream"); got != "users" {
+		t.Fatalf("X-Upstream = %q, want users", got)
+	}
+	if got := rec.Body.String(); got != `{"accepted":true}` {
+		t.Fatalf("body = %q, want upstream body", got)
 	}
 }
 
