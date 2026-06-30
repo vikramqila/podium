@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,6 +40,10 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request, route conf
 	if err != nil {
 		return fmt.Errorf("build upstream request: %w", err)
 	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("read downstream request body: %w", err)
+	}
 
 	ctx := r.Context()
 	if timeout > 0 {
@@ -47,15 +52,7 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request, route conf
 		defer cancel()
 	}
 
-	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
-	if err != nil {
-		return fmt.Errorf("create upstream request: %w", err)
-	}
-	copyRequestHeaders(upstreamReq.Header, r.Header)
-	upstreamReq.Host = upstreamReq.URL.Host
-	appendForwardedFor(upstreamReq.Header, r.RemoteAddr)
-
-	resp, err := f.client.Do(upstreamReq)
+	resp, err := f.doWithRetries(ctx, r, targetURL, body, route)
 	if err != nil {
 		if isTimeout(ctx, err) {
 			return ErrUpstreamTimeout
@@ -71,6 +68,54 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request, route conf
 	}
 
 	return nil
+}
+
+func (f *Forwarder) doWithRetries(ctx context.Context, r *http.Request, targetURL string, body []byte, route config.Route) (*http.Response, error) {
+	attempts := retryAttempts(route.Retry)
+	var lastErr error
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		resp, err := f.doAttempt(ctx, r, targetURL, body)
+		if err != nil {
+			lastErr = err
+			if !canRetryAttempt(ctx, attempt, attempts) {
+				return nil, err
+			}
+			if err := sleepBeforeRetry(ctx, route.Retry, attempt); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if shouldRetryStatus(route.Retry, resp.StatusCode) && attempt < attempts {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if err := sleepBeforeRetry(ctx, route.Retry, attempt); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return nil, lastErr
+}
+
+func (f *Forwarder) doAttempt(ctx context.Context, r *http.Request, targetURL string, body []byte) (*http.Response, error) {
+	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create upstream request: %w", err)
+	}
+	copyRequestHeaders(upstreamReq.Header, r.Header)
+	upstreamReq.Host = upstreamReq.URL.Host
+	appendForwardedFor(upstreamReq.Header, r.RemoteAddr)
+
+	resp, err := f.client.Do(upstreamReq)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func forwardedPath(route config.Route, requestPath string) string {
@@ -99,6 +144,73 @@ func buildTargetURL(upstream string, requestURL *url.URL, requestPath string) (s
 	out.RawQuery = requestURL.RawQuery
 	out.Fragment = ""
 	return out.String(), nil
+}
+
+func retryAttempts(retry *config.Retry) int {
+	if retry == nil || retry.Attempts <= 1 {
+		return 1
+	}
+	return retry.Attempts
+}
+
+func canRetryAttempt(ctx context.Context, attempt int, attempts int) bool {
+	return attempt < attempts && ctx.Err() == nil
+}
+
+func shouldRetryStatus(retry *config.Retry, statusCode int) bool {
+	if retry == nil {
+		return false
+	}
+	for _, retryStatus := range retry.On {
+		if retryStatus == statusCode {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepBeforeRetry(ctx context.Context, retry *config.Retry, completedAttempt int) error {
+	delay := retryDelay(retry, completedAttempt)
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func retryDelay(retry *config.Retry, completedAttempt int) time.Duration {
+	if retry == nil {
+		return 0
+	}
+
+	delay := parseDuration(retry.InitialDelay)
+	if retry.Backoff != "exponential" {
+		return delay
+	}
+
+	for i := 1; i < completedAttempt; i++ {
+		delay *= 2
+	}
+	return delay
+}
+
+func parseDuration(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return duration
 }
 
 func singleJoiningSlash(left string, right string) string {

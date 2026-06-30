@@ -34,7 +34,7 @@ go test ./...
 - [x] Support global and route-level timeouts
 - [x] Support API key authentication
 - [x] Support fixed-window rate limiting
-- [ ] Support retries for transient upstream failures
+- [x] Support retries for transient upstream failures
 - [ ] Support multiple upstream targets
 
 Current CLI output after a successful startup:
@@ -55,6 +55,10 @@ the configured keys before proxying.
 Fixed-window rate limits are enforced in memory. Route-level limits override the global
 limit, and `per: ip` and `per: global` buckets are supported. `sliding_window` is parsed but
 not enforced yet.
+
+Single-upstream routes with `retry` retry configured upstream status codes using fixed or
+exponential backoff. Request bodies are buffered so retried requests preserve the original
+payload.
 
 ## Project Layout
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"gatewaykit/internal/config"
@@ -118,5 +119,124 @@ func TestForwarderStripsExactRoutePrefixToRoot(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestForwarderRetriesConfiguredStatuses(t *testing.T) {
+	var attempts int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := atomic.AddInt32(&attempts, 1)
+		if attempt < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("try again"))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/orders", nil)
+	rec := httptest.NewRecorder()
+	route := config.Route{
+		Upstream: config.Upstream{URL: upstream.URL},
+		Retry: &config.Retry{
+			Attempts:     3,
+			Backoff:      "fixed",
+			InitialDelay: "0s",
+			On:           []int{http.StatusServiceUnavailable},
+		},
+	}
+
+	err := NewForwarder(upstream.Client()).ServeHTTP(rec, req, route, 0)
+	if err != nil {
+		t.Fatalf("ServeHTTP() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.String(); got != "ok" {
+		t.Fatalf("body = %q, want ok", got)
+	}
+}
+
+func TestForwarderDoesNotRetryUnconfiguredStatus(t *testing.T) {
+	var attempts int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("not retried"))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/orders", nil)
+	rec := httptest.NewRecorder()
+	route := config.Route{
+		Upstream: config.Upstream{URL: upstream.URL},
+		Retry: &config.Retry{
+			Attempts:     3,
+			Backoff:      "fixed",
+			InitialDelay: "0s",
+			On:           []int{http.StatusServiceUnavailable},
+		},
+	}
+
+	err := NewForwarder(upstream.Client()).ServeHTTP(rec, req, route, 0)
+	if err != nil {
+		t.Fatalf("ServeHTTP() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts = %d, want 1", got)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestForwarderRetriesPreserveRequestBody(t *testing.T) {
+	var attempts int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := atomic.AddInt32(&attempts, 1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if got := string(body); got != `{"id":42}` {
+			t.Fatalf("attempt %d body = %q, want original body", attempt, got)
+		}
+
+		if attempt == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/orders", strings.NewReader(`{"id":42}`))
+	rec := httptest.NewRecorder()
+	route := config.Route{
+		Upstream: config.Upstream{URL: upstream.URL},
+		Retry: &config.Retry{
+			Attempts:     2,
+			Backoff:      "fixed",
+			InitialDelay: "0s",
+			On:           []int{http.StatusBadGateway},
+		},
+	}
+
+	err := NewForwarder(upstream.Client()).ServeHTTP(rec, req, route, 0)
+	if err != nil {
+		t.Fatalf("ServeHTTP() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("attempts = %d, want 2", got)
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
 	}
 }
