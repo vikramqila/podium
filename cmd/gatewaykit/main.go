@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"gatewaykit/internal/config"
 )
 
 func main() {
@@ -19,5 +21,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Fprintf(os.Stdout, "GatewayKit scaffold ready; config path: %s\n", *configPath)
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stdout, "GatewayKit config loaded: port=%d routes=%d\n", cfg.Gateway.Port, len(cfg.Gateway.Routes))
 }

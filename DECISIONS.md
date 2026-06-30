@@ -44,10 +44,11 @@ without rewriting the core proxy path.
 ## Current Status
 
 - Project scaffold created.
+- YAML configuration loading and validation implemented.
 - Gateway behavior is not implemented yet.
 
 ## Next Steps
 
-1. Add config structs and YAML loading.
-2. Add validation for required fields and durations.
-3. Add tests around config loading with the sample schema.
+1. Add the HTTP server and unconditional `GET /health`.
+2. Add route matching and method filtering.
+3. Add tests for health, `404`, and `405` responses.

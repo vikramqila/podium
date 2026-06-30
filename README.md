@@ -12,7 +12,7 @@ Prerequisite:
 
 - Go 1.22 or newer
 
-Run the gateway:
+Load the gateway config:
 
 ```bash
 go run ./cmd/gatewaykit --config gateway.yaml
@@ -26,7 +26,7 @@ go test ./...
 
 ## Planned Feature Checklist
 
-- [ ] Load gateway configuration from YAML
+- [x] Load gateway configuration from YAML
 - [ ] Expose `GET /health`
 - [ ] Match routes and enforce allowed methods
 - [ ] Proxy requests to single upstream routes
@@ -36,6 +36,12 @@ go test ./...
 - [ ] Support fixed-window rate limiting
 - [ ] Support retries for transient upstream failures
 - [ ] Support multiple upstream targets
+
+Current CLI output after a successful config load:
+
+```text
+GatewayKit config loaded: port=8080 routes=5
+```
 
 ## Project Layout
 
