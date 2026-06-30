@@ -7,6 +7,8 @@ requests to upstream services.
 ## Prerequisites
 
 - Go 1.22 or newer
+- `make`
+- `curl`
 
 ## Run
 
@@ -57,6 +59,74 @@ Confirm all packages compile:
 go build ./...
 ```
 
+## Manual Demo
+
+Start the gateway and all six mock upstreams:
+
+```bash
+make demo-up
+```
+
+This starts:
+
+- GatewayKit on `localhost:8080`
+- `users` mock upstream on `localhost:3001`
+- `orders` mock upstream on `localhost:3002`
+- `products-a` mock upstream on `localhost:3003`
+- `products-b` mock upstream on `localhost:3004`
+- `legacy` mock upstream on `localhost:3005`
+- `internal` mock upstream on `localhost:3006`
+
+Useful demo commands:
+
+```bash
+# Gateway health
+curl -i 'http://localhost:8080/health'
+
+# Route matching, proxying, headers, path, and query forwarding
+curl -i 'http://localhost:8080/api/users/echo?x=1'
+
+# 404 for unmatched paths
+curl -i 'http://localhost:8080/not-configured'
+
+# 405 with Allow header for disallowed methods
+curl -i -X DELETE 'http://localhost:8080/api/users'
+
+# API key auth failure
+curl -i 'http://localhost:8080/api/internal/echo'
+
+# API key auth success
+curl -i -H 'X-API-Key: sk_live_abc123' 'http://localhost:8080/api/internal/echo'
+
+# Retry support: orders upstream fails twice, then recovers on the third attempt
+curl -i 'http://localhost:8080/api/orders/flaky'
+
+# Route timeout: orders route has a 5s timeout, mock upstream sleeps for 6s
+curl -i 'http://localhost:8080/api/orders/slow'
+
+# Prefix stripping: legacy route forwards /api/legacy/echo as /echo
+curl -i 'http://localhost:8080/api/legacy/echo?source=demo'
+
+# Weighted round robin: products-a should appear more often than products-b
+for i in {1..4}; do curl -s 'http://localhost:8080/api/products/echo?sku=123'; echo; done
+
+# Fixed-window rate limit on orders: later requests should return 429 in a fresh 10s window
+for i in {1..11}; do curl -s -o /dev/null -w "%{http_code}\n" 'http://localhost:8080/api/orders/rate-limit'; done
+```
+
+Inspect demo status or logs:
+
+```bash
+make demo-status
+make demo-logs
+```
+
+Stop the gateway and mock upstreams:
+
+```bash
+make demo-down
+```
+
 ## Mock Upstreams
 
 The repository includes a simple mock upstream server for manual testing:
@@ -68,9 +138,9 @@ go run ./cmd/mockupstream --port 3001 --name users
 Useful endpoints:
 
 - `GET /healthz` returns a health response.
-- `GET /echo?x=1` returns method, path, query, and service name.
-- `GET /slow` waits six seconds before responding.
-- `GET /flaky` returns `503` twice, then `200`, repeating every three requests.
+- `GET /echo?x=1` or any path ending in `/echo` returns method, path, query, and service name.
+- `GET /slow` or any path ending in `/slow` waits six seconds before responding.
+- `GET /flaky` or any path ending in `/flaky` returns `503` twice, then `200`, repeating every three requests.
 - Any other path returns a canned `200` JSON response.
 
 To exercise the sample `gateway.yaml`, start one mock upstream per configured port:

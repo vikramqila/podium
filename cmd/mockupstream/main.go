@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -31,36 +32,41 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response{Service: *name, Message: "healthy"})
 	})
-	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(6 * time.Second)
-		writeJSON(w, http.StatusOK, response{Service: *name, Message: "slow response"})
-	})
-	mux.HandleFunc("/flaky", func(w http.ResponseWriter, r *http.Request) {
-		attempt := atomic.AddInt64(&flakyAttempts, 1)
-		if attempt%3 != 0 {
-			writeJSON(w, http.StatusServiceUnavailable, response{
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/slow") {
+			time.Sleep(6 * time.Second)
+			writeJSON(w, http.StatusOK, response{Service: *name, Path: r.URL.Path, Message: "slow response"})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/flaky") {
+			attempt := atomic.AddInt64(&flakyAttempts, 1)
+			if attempt%3 != 0 {
+				writeJSON(w, http.StatusServiceUnavailable, response{
+					Service: *name,
+					Path:    r.URL.Path,
+					Message: "temporary failure",
+					Attempt: attempt,
+				})
+				return
+			}
+			writeJSON(w, http.StatusOK, response{
 				Service: *name,
-				Message: "temporary failure",
+				Path:    r.URL.Path,
+				Message: "recovered",
 				Attempt: attempt,
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, response{
-			Service: *name,
-			Message: "recovered",
-			Attempt: attempt,
-		})
-	})
-	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, response{
-			Service: *name,
-			Method:  r.Method,
-			Path:    r.URL.Path,
-			Query:   r.URL.RawQuery,
-			Message: "echo",
-		})
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/echo") {
+			writeJSON(w, http.StatusOK, response{
+				Service: *name,
+				Method:  r.Method,
+				Path:    r.URL.Path,
+				Query:   r.URL.RawQuery,
+				Message: "echo",
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, response{
 			Service: *name,
 			Method:  r.Method,

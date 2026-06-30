@@ -285,9 +285,9 @@ Behavior:
 - Supports `--port` and `--name` flags, with environment-variable fallbacks.
 - Provides:
   - `GET /healthz`
-  - `GET /echo?x=1`
-  - `GET /slow`
-  - `GET /flaky`
+  - `GET /echo?x=1` or any path ending in `/echo`
+  - `GET /slow` or any path ending in `/slow`
+  - `GET /flaky` or any path ending in `/flaky`
   - canned JSON for all other paths
 
 Manual sample:
@@ -387,7 +387,19 @@ go build ./...
 
 ## Manual End-to-End Run
 
-Start the sample upstreams:
+Start the sample upstreams and gateway:
+
+```bash
+make demo-up
+```
+
+Stop them when finished:
+
+```bash
+make demo-down
+```
+
+You can also start the sample upstreams manually:
 
 ```bash
 go run ./cmd/mockupstream --port 3001 --name users
@@ -414,4 +426,3 @@ curl -i 'http://localhost:8080/api/products/sku-123'
 curl -i 'http://localhost:8080/api/internal/echo'
 curl -i -H 'X-API-Key: sk_live_abc123' 'http://localhost:8080/api/internal/echo'
 ```
-
