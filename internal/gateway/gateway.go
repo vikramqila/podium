@@ -16,6 +16,8 @@ type Handler struct {
 	startedAt     time.Time
 	routes        []config.Route
 	globalTimeout time.Duration
+	globalLimit   *config.RateLimit
+	limiter       *rateLimiter
 	proxy         *proxy.Forwarder
 }
 
@@ -24,6 +26,8 @@ func NewHandler(cfg config.Gateway) *Handler {
 		startedAt:     time.Now(),
 		routes:        cfg.Routes,
 		globalTimeout: parseDuration(cfg.GlobalTimeout),
+		globalLimit:   cfg.GlobalRateLimit,
+		limiter:       newRateLimiter(),
 		proxy:         proxy.NewForwarder(nil),
 	}
 }
@@ -46,6 +50,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !authorized(route, r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !h.withinRateLimit(route, r) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
 		return
 	}
 
@@ -120,6 +128,21 @@ func (h *Handler) timeoutFor(route config.Route) time.Duration {
 		return parseDuration(route.Timeout)
 	}
 	return h.globalTimeout
+}
+
+func (h *Handler) withinRateLimit(route config.Route, r *http.Request) bool {
+	rule := h.rateLimitFor(route)
+	if rule == nil {
+		return true
+	}
+	return h.limiter.allow(route, r, *rule)
+}
+
+func (h *Handler) rateLimitFor(route config.Route) *config.RateLimit {
+	if route.RateLimit != nil {
+		return route.RateLimit
+	}
+	return h.globalLimit
 }
 
 func parseDuration(value string) time.Duration {
